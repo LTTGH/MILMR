@@ -1,0 +1,86 @@
+from __future__ import print_function
+import argparse
+import torch
+import torch.optim as optim
+import pandas as pd
+#import DataLoader_tiger
+#from models_tiger import MIL
+#from train_test_script_tiger import train_basic, test_basic, train_advanced,train_initial_model, init_t_model, MIL_Loss, print_result
+import random
+from torch.utils.data import DataLoader
+
+import numpy as np
+
+parser = argparse.ArgumentParser(description = 'MIL MNIST-Bags')
+parser.add_argument('--epochs', type=int, default=5, help='number of epochs to train (default: 10)')
+parser.add_argument('--batch_size', type=int, default=1, help='the size of the batch')
+parser.add_argument('--lr', type=float, default=0.0005, help='learning rate (default: 0.0005)')
+parser.add_argument('--reg', type=float, default=10e-5, help='weight decay')
+parser.add_argument('--seed', type=int, default=1, help='random seed (default: 1)')
+parser.add_argument('--model', type=str, default='attention',
+                    help = 'type of aggregation : attention, gated_attention, noisy and, noisy or, ISR, generalized mean, LSE')
+
+args = parser.parse_args()
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+loader_kwargs = {'num_workers': 1, 'pin_memory': True} if torch.cuda.is_available() else {}
+
+
+if __name__ == '__main__':
+    ### Read from csv file and create train and test dataloader
+    #project_name = 'tiger'
+    #seed_num = 10 if project_name=='tiger' else 0
+    #csv_file = f'C:/Users/liutiantian/Desktop/MIL_tiger/data/{project_name}_inst.csv'
+    #project_name = '1'
+    #csv_file = f'C:/Users/liutiantian/Desktop/50/pys1k2_50_{project_name}.csv'
+    seed_num = 10
+    project_name = 'pys1k2_50_10'
+    csv_file = f'C:/Users/liutiantian/Desktop/50/data/50/{project_name}.csv'
+    df = pd.read_csv(csv_file)
+    torch.manual_seed(seed_num)
+    #train_sample_size = int(np.ceil(df.bagName.nunique()*0.8))
+    num_feature = len(df.columns)-2
+    #dataloader = DataLoader_tiger.TigerDataset(df)
+    dataloader = S1k250RDataset(df)
+
+    print('Train the basic MIL model')
+    model = MIL(num_feature, args.model)
+    loss = torch.nn.BCELoss()
+    optimizer = optim.Adam(model.parameters(), lr = args.lr, betas = (0.9, 0.999), weight_decay = args.reg)
+    #training_sample = random.sample(range(len(dataloader)),train_sample_size)
+    training_sample = range(1, 50, 1)
+    testing_sample = np.setdiff1d(range(len(dataloader)),training_sample)
+    train = [dataloader[i] for i in training_sample]
+    test = [dataloader[i] for i in testing_sample]
+    if project_name in ['tiger', 'elephant']:
+        train_loader = DataLoader(train, batch_size=args.batch_size, shuffle=True, drop_last=False, worker_init_fn=np.random.seed(seed_num))
+        test_loader = DataLoader(test, batch_size=args.batch_size, shuffle=False, drop_last=False, worker_init_fn=np.random.seed(seed_num))
+
+    else:
+        train_loader = DataLoader(train, batch_size=args.batch_size, shuffle=True, drop_last=False)
+        test_loader = DataLoader(test, batch_size=args.batch_size, shuffle=False, drop_last=False)
+
+    print('Training \n--------')
+    train_basic(model, train_loader, loss, optimizer, device, args.epochs)
+    print('Testing \n-------')
+    test_basic(model, test_loader,device)
+    torch.save(model.state_dict(), f'C:/Users/liutiantian/Desktop/50/models/model_0_weights_{project_name}.pkl')
+
+    print('Train the advanced model')
+    num_T=3
+    train_loss = dict()
+    train_acc = dict()
+    # train_initial_model(args, train_loader,test_loader,args.epochs,device)
+
+    for t in range(1, num_T):
+        print(f'the model is num {t}')
+        model = MIL(num_feature, args.model)
+        model = init_t_model(model, t - 1, project_name)
+        optimizer = optim.Adam(model.parameters(), lr=0.0005, betas=(0.9, 0.999))
+        loss = MIL_Loss()
+        train_loss[t], train_acc[t], model = train_advanced(model, train_loader, loss, optimizer, device, args.epochs)
+        torch.save(model.state_dict(), f'C:/Users/liutiantian/Desktop/50/models/model_{t}_weights_{project_name}.pkl')
+        print('\n')
+
+        print(f'train loss for model {t}: {train_loss[t]}')
+        print(f'train accuracy for model {t}: {train_acc[t]}')
+
